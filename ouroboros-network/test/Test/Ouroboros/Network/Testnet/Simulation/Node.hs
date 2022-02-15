@@ -81,7 +81,7 @@ import           Test.Ouroboros.Network.PeerSelection.RootPeersDNS
 
 import           Test.QuickCheck (Arbitrary (..), Gen, Property, choose,
                      chooseInt, counterexample, frequency, oneof, property,
-                     shrinkList, sized, sublistOf, vectorOf, (.&&.), resize)
+                     shrinkList, sized, sublistOf, vectorOf, (.&&.))
 
 
 -- | Diffusion Simulator Arguments
