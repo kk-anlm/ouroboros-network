@@ -100,10 +100,11 @@ genIPv6 =
 
 instance Arbitrary RelayAccessPoint where
   arbitrary =
-      oneof [ RelayDomainAccessPoint <$> arbitrary
-            , RelayAccessAddress <$> oneof [genIPv4, genIPv6]
-                                 <*> (fromIntegral <$> (arbitrary :: Gen Int))
-            ]
+      frequency [ (1, RelayDomainAccessPoint <$> arbitrary)
+                , (2, RelayAccessAddress <$> oneof [genIPv4, genIPv6]
+                                         <*> (fromIntegral
+                                             <$> (arbitrary :: Gen Int)))
+                ]
 
 prop_arbitrary_PeerSelectionTargets :: PeerSelectionTargets -> Bool
 prop_arbitrary_PeerSelectionTargets =
