@@ -26,7 +26,7 @@ import           Control.Monad.Class.MonadThrow (MonadCatch, MonadEvaluate,
 import           Control.Monad.Class.MonadTime (DiffTime, MonadTime)
 import           Control.Monad.Class.MonadTimer (MonadTimer, threadDelay)
 import           Control.Monad.Class.MonadSay (MonadSay)
-import           Control.Tracer (nullTracer, Tracer, traceWith)
+import           Control.Tracer (Tracer, traceWith, nullTracer)
 
 import qualified Data.ByteString.Lazy as BL
 import           Data.IP (IP (..), toIPv4, toIPv6)
@@ -157,7 +157,10 @@ genCommands localRoots = sized $ \size -> do
       subLRP <- sublistOf localRoots
       mapM (mapM (fmap Map.fromList . sublistOf . Map.toList)) subLRP
 
-    delay = frequency [(3, genDelayWithPrecision 10), (1, (/ 10) <$> genDelayWithPrecision 2)]
+    delay = frequency [ (3, genDelayWithPrecision 100)
+                      , (2, (* 10) <$> genDelayWithPrecision 100)
+                      , (1, (/ 10) <$> genDelayWithPrecision 100)
+                      ]
 
 fixupCommands :: [Command] -> [Command]
 fixupCommands [] = []

@@ -2,6 +2,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE NamedFieldPuns #-}
 
 module Test.Ouroboros.Network.Testnet (tests) where
 
@@ -9,11 +10,13 @@ import           Control.Monad.IOSim
 import           Control.Monad.Class.MonadTime (Time (Time))
 import           Control.Tracer (Tracer (Tracer), contramap, nullTracer)
 
+import           Data.Bifoldable (bifoldMap)
 import           Data.Void (Void)
 import           Data.Set (Set)
 import qualified Data.Set as Set
 import qualified Data.Map as Map
-import           Data.Maybe (fromMaybe)
+import           Data.Maybe (fromMaybe, mapMaybe)
+import           Data.Monoid (Sum(..))
 import           Data.Dynamic (Typeable)
 import           Data.Functor (void)
 import           Data.List (intercalate)
@@ -51,6 +54,12 @@ import           Test.Ouroboros.Network.Testnet.Simulation.Node
                      prop_diffusionScript_commandScript_valid,
                      prop_diffusionScript_fixupCommands,
                      DiffusionSimulationTrace (..))
+import           Test.Ouroboros.Network.Testnet.Simulation.ConnectionManager
+                     (TestProperty(..), mkProperty, ppTransition,
+                     AllProperty (..), classifyPrunings,
+                     classifyNegotiatedDataFlow, classifyEffectiveDataFlow,
+                     verifyAbstractTransition, classifyActivityType,
+                     classifyTermination, splitConns)
 import           Test.Ouroboros.Network.Diffusion.Node.NodeKernel
 import           Test.QuickCheck (Property, counterexample, conjoin)
 import           Test.Tasty
@@ -70,6 +79,8 @@ tests =
                    prop_diffusion_target_active_below
     , testProperty "diffusion target active local above"
                    prop_diffusion_target_active_local_above
+    , testProperty "diffusion connection manager valid transitions"
+                   prop_diffusion_cm_valid_transitions
     ]
   ]
 
@@ -90,6 +101,8 @@ data DiffusionTestTrace =
         (ConnectionManagerTrace NtNAddr
           (ConnectionHandlerTrace NtNVersion NtNVersionData))
     | DiffusionDiffusionSimulationTrace DiffusionSimulationTrace
+    | DiffusionConnectionManagerTransitionTrace
+        (AbstractTransitionTrace NtNAddr)
     deriving (Show)
 
 tracersExtraWithTimeName
@@ -136,7 +149,11 @@ tracersExtraWithTimeName ntnAddr =
                                           . tracerWithName ntnAddr
                                           . tracerWithTime
                                           $ dynamicTracer
-    , dtConnectionManagerTransitionTracer = nullTracer
+    , dtConnectionManagerTransitionTracer = contramap
+                                              DiffusionConnectionManagerTransitionTrace
+                                          . tracerWithName ntnAddr
+                                          . tracerWithTime
+                                          $ dynamicTracer
     , dtServerTracer                      = nullTracer
     , dtInboundGovernorTracer             = nullTracer
     , dtInboundGovernorTransitionTracer   = nullTracer
@@ -568,6 +585,100 @@ prop_diffusion_target_active_local_above defaultBearerInfo diffScript =
                    <*> demotionOpportunities
                    <*> demotionOpportunitiesIgnoredTooLong)
 
+
+-- | A variant of ouroboros-network-framework
+-- 'Test.Ouroboros.Network.Server2.prop_connection_manager_valid_transitions'
+-- but for running on Diffusion. This means it has to have in consideration the
+-- the logs for all nodes running will all appear in the trace and the test
+-- property should only be valid while a given node is up and running.
+--
+-- We do not need separate above and below variants of this property since it
+-- is not possible to exceed the target.
+--
+prop_diffusion_cm_valid_transitions :: AbsBearerInfo
+                                    -> DiffusionScript
+                                    -> Property
+prop_diffusion_cm_valid_transitions defaultBearerInfo diffScript =
+    let sim :: forall s . IOSim s Void
+        sim = diffusionSimulation (toBearerInfo defaultBearerInfo)
+                                  diffScript
+                                  tracersExtraWithTimeName
+                                  tracerDiffusionSimWithTimeName
+
+        events :: [Trace () DiffusionTestTrace]
+        events = fmap ( Trace.fromList ()
+                      . fmap (\(WithName _ (WithTime _ b)) -> b))
+               . Trace.toList
+               . splitWithNameTrace
+               . Trace.fromList ()
+               . fmap snd
+               . Signal.eventsToList
+               . Signal.eventsFromListUpToTime (Time (10 * 60 * 60))
+               . Trace.toList
+               . fmap (\(WithTime t (WithName name b))
+                       -> (t, WithName name (WithTime t b)))
+               . withTimeNameTraceEvents
+                  @DiffusionTestTrace
+                  @NtNAddr
+               $ runSimTrace sim
+
+     in conjoin
+      $ verify_cm_valid_transitions
+      <$> events
+
+  where
+    verify_cm_valid_transitions :: Trace () DiffusionTestTrace -> Property
+    verify_cm_valid_transitions events =
+      let abstractTransitionEvents :: Trace () (AbstractTransitionTrace NtNAddr)
+          abstractTransitionEvents =
+            selectDiffusionConnectionManagerTransitionEvents events
+
+          connectionManagerEvents :: [ConnectionManagerTrace
+                                        NtNAddr
+                                        (ConnectionHandlerTrace
+                                          NtNVersion
+                                          NtNVersionData)]
+          connectionManagerEvents =
+              Trace.toList
+            . selectDiffusionConnectionManagerEvents
+            $ events
+
+       in mkProperty
+        . bifoldMap
+           ( const mempty )
+           ( \ trs
+            -> TestProperty {
+                 tpProperty =
+                     (counterexample $!
+                       (  "\nconnection:\n"
+                       ++ intercalate "\n" (map ppTransition trs))
+                       )
+                   . getAllProperty
+                   . foldMap ( \ tr
+                              -> AllProperty
+                               . (counterexample $!
+                                   (  "\nUnexpected transition: "
+                                   ++ show tr)
+                                   )
+                               . verifyAbstractTransition
+                               $ tr
+                             )
+                   $ trs,
+                 tpNumberOfTransitions = Sum (length trs),
+                 tpNumberOfConnections = Sum 1,
+                 tpNumberOfPrunings    = classifyPrunings connectionManagerEvents,
+                 tpNegotiatedDataFlows = [classifyNegotiatedDataFlow trs],
+                 tpEffectiveDataFlows  = [classifyEffectiveDataFlow  trs],
+                 tpTerminationTypes    = [classifyTermination        trs],
+                 tpActivityTypes       = [classifyActivityType       trs],
+                 tpTransitions         = trs
+              }
+           )
+        . fmap (map ttTransition)
+        . splitConns id
+        $ abstractTransitionEvents
+
+
 -- Utils
 --
 
@@ -614,6 +725,29 @@ selectDiffusionPeerSelectionState f =
       (\case
         DiffusionDebugPeerSelectionTrace (TraceGovernorState _ _ st) -> Just st
         _                                                            -> Nothing)
+
+selectDiffusionConnectionManagerEvents
+  :: Trace () DiffusionTestTrace
+  -> Trace () (ConnectionManagerTrace NtNAddr
+                 (ConnectionHandlerTrace
+                    NtNVersion
+                    NtNVersionData))
+selectDiffusionConnectionManagerEvents =
+  Trace.fromList ()
+  . mapMaybe
+     (\case DiffusionConnectionManagerTrace e -> Just e
+            _                                 -> Nothing)
+  . Trace.toList
+
+selectDiffusionConnectionManagerTransitionEvents
+  :: Trace () DiffusionTestTrace
+  -> Trace () (AbstractTransitionTrace NtNAddr)
+selectDiffusionConnectionManagerTransitionEvents =
+  Trace.fromList ()
+  . mapMaybe
+     (\case DiffusionConnectionManagerTransitionTrace e -> Just e
+            _                                           -> Nothing)
+  . Trace.toList
 
 toBearerInfo :: AbsBearerInfo -> BearerInfo
 toBearerInfo abi =

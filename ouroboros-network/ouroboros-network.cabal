@@ -315,6 +315,7 @@ test-suite test
                        Test.Ouroboros.Network.ShrinkCarefully
                        Test.Ouroboros.Network.Testnet
                        Test.Ouroboros.Network.Testnet.Simulation.Node
+                       Test.Ouroboros.Network.Testnet.Simulation.ConnectionManager
                        Test.Mux
                        Test.Pipe
                        Test.Socket

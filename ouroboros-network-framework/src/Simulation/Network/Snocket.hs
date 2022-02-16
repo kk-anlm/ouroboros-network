@@ -784,6 +784,7 @@ mkSnocket state tr = Snocket { getLocalAddr
             -- We need a way for a node to detect if the other end failed so
             -- we keep an eye on the network state while waiting the full amount
             -- of connection delay
+            -- TODO: Improve this see #3628
             connDelayTimeoutVar <-
               registerDelay (biConnectionDelay bearerInfo `min` connectTimeout)
             unmask
