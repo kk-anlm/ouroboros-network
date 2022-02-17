@@ -969,7 +969,7 @@ sm secParam db = StateMachine {
     }
 
 prop_sequential :: SecurityParam -> QC.Property
-prop_sequential secParam =
+prop_sequential secParam = QC.withMaxSuccess 100000 $
     forAllCommands (sm secParam dbUnused) Nothing $ \cmds ->
       QC.monadicIO (propCmds secParam cmds)
 
