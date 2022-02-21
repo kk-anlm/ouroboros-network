@@ -23,7 +23,7 @@ import           Ouroboros.Network.ConnectionHandler (ConnectionHandlerTrace)
 
 import           Test.QuickCheck
                      (Property, (.&&.), Testable (property), label, tabulate,
-                     cover)
+                     cover, counterexample)
 
 -- | Split 'AbstractTransitionTrace' into seprate connections.  This relies on
 -- the property that every connection is terminated with 'UnknownConnectionSt'.
@@ -165,6 +165,36 @@ verifyAbstractTransition Transition { fromState, toState } =
       (TerminatingSt, UnnegotiatedSt Inbound) -> True
 
       _ -> False
+
+-- Assuming all transitions in the transition list are valid, we only need to
+-- look at the 'toState' of the current transition and the 'fromState' of the
+-- next transition.
+verifyAbstractTransitionOrder :: [AbstractTransition]
+                              -> AllProperty
+verifyAbstractTransitionOrder [] = mempty
+verifyAbstractTransitionOrder (h:t) = go t h
+  where
+    go :: [AbstractTransition] -> AbstractTransition -> AllProperty
+    -- All transitions must end in the 'UnknownConnectionSt', and since we
+    -- assume that all transitions are valid we do not have to check the
+    -- 'fromState'.
+    go [] (Transition _ UnknownConnectionSt) = mempty
+    go [] tr@(Transition _ _)          =
+      AllProperty
+        $ counterexample
+            ("\nUnexpected last transition: " ++ show tr)
+            (property False)
+    -- All transitions have to be in a correct order, which means that the
+    -- current state we are looking at (current toState) needs to be equal to
+    -- the next 'fromState', in order for the transition chain to be correct.
+    go (next@(Transition nextFromState _) : ts)
+        curr@(Transition _ currToState) =
+         AllProperty
+           (counterexample
+              ("\nUnexpected transition order!\nWent from: "
+              ++ show curr ++ "\nto: " ++ show next)
+              (property (currToState == nextFromState)))
+         <> go ts next
 
 
 --

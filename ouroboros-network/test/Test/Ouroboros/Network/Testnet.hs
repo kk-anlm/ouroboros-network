@@ -328,9 +328,6 @@ prop_diffusion_target_established_local defaultBearerInfo diffScript =
 -- the logs for all nodes running will all appear in the trace and the test
 -- property should only be valid while a given node is up and running.
 --
--- We do not need separate above and below variants of this property since it
--- is not possible to exceed the target.
---
 prop_diffusion_target_active_below :: AbsBearerInfo
                                    -> DiffusionScript
                                    -> Property
@@ -477,9 +474,6 @@ prop_diffusion_target_active_below defaultBearerInfo diffScript =
 -- the logs for all nodes running will all appear in the trace and the test
 -- property should only be valid while a given node is up and running.
 --
--- We do not need separate above and below variants of this property since it
--- is not possible to exceed the target.
---
 prop_diffusion_target_active_local_above :: AbsBearerInfo
                                          -> DiffusionScript
                                          -> Property
@@ -591,9 +585,6 @@ prop_diffusion_target_active_local_above defaultBearerInfo diffScript =
 -- but for running on Diffusion. This means it has to have in consideration the
 -- the logs for all nodes running will all appear in the trace and the test
 -- property should only be valid while a given node is up and running.
---
--- We do not need separate above and below variants of this property since it
--- is not possible to exceed the target.
 --
 prop_diffusion_cm_valid_transitions :: AbsBearerInfo
                                     -> DiffusionScript
