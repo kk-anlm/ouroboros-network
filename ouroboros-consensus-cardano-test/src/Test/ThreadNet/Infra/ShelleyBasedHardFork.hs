@@ -69,7 +69,7 @@ import           Test.ThreadNet.TxGen.Shelley ()
 
 -- | Two eras, both Shelley-based.
 type ShelleyBasedHardForkEras era1 era2 =
-    '[ShelleyBlock era proto1, ShelleyBlock era proto2]
+    '[ShelleyBlock (TPraos (EraCrypto era1)) era1, ShelleyBlock (TPraos (EraCrypto era1)) era2]
 
 type ShelleyBasedHardForkBlock era1 era2 =
   HardForkBlock (ShelleyBasedHardForkEras era1 era2)
@@ -120,8 +120,8 @@ pattern ShelleyBasedHardForkNodeToClientVersion1 =
 type ShelleyBasedHardForkConstraints era1 era2 =
   ( ShelleyBasedEra era1
   , ShelleyBasedEra era2
-  , TxLimits (ShelleyBlock era proto1)
-  , TxLimits (ShelleyBlock era proto2)
+  , TxLimits (ShelleyBlock(TPraos (EraCrypto era1)) era1 )
+  , TxLimits (ShelleyBlock (TPraos (EraCrypto era2)) era2 )
   , EraCrypto era1 ~ EraCrypto era2
   , SL.PreviousEra era2 ~ era1
 
