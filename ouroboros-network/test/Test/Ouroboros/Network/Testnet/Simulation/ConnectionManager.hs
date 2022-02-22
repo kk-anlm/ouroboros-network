@@ -1,6 +1,9 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE LambdaCase #-}
 
+-- Auxiliary module that gets stuff from 'Test.Ouroboros.Network.Server2'
+-- and 'Test.Ouroboros.Network.ConnectionManager' and adapts them in order
+-- to be used in Diffusion Tests.
 module Test.Ouroboros.Network.Testnet.Simulation.ConnectionManager where
 
 import           Control.Monad.IOSim (Trace)
