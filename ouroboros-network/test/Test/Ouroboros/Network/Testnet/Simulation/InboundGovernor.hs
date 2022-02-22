@@ -7,10 +7,17 @@
 -- and adapts them in order to be used in Diffusion Tests.
 module Test.Ouroboros.Network.Testnet.Simulation.InboundGovernor where
 
+
+import           Data.Bitraversable (bimapAccumL)
+import           Data.List.Trace (Trace)
+import qualified Data.List.Trace as Trace
+import qualified Data.Map as Map
+import           Data.Maybe (fromJust, isJust)
+
 import           Ouroboros.Network.ConnectionManager.Types
-                     (Transition' (..))
+                     (Transition' (..), TransitionTrace' (..))
 import           Ouroboros.Network.InboundGovernor
-                     (RemoteTransition, RemoteSt (..))
+                     (RemoteTransition, RemoteSt (..), RemoteTransitionTrace)
 
 import           Test.QuickCheck
                      (Testable (property), counterexample)
@@ -110,3 +117,34 @@ verifyRemoteTransitionOrder (h:t) = go t h
               ++ show curr ++ "\nto: " ++ show next)
               (property (currToState == nextFromState)))
          <> go ts next
+
+
+splitRemoteConns :: Ord addr
+                 => Trace r (RemoteTransitionTrace addr)
+                 -> Trace r [RemoteTransition]
+splitRemoteConns =
+    fmap fromJust
+  . Trace.filter isJust
+  -- there might be some connections in the state, push them onto the 'Trace'
+  . (\(s, o) -> foldr (\a as -> Trace.Cons (Just a) as) o (Map.elems s))
+  . bimapAccumL
+      ( \ s a -> ( s, a))
+      ( \ s TransitionTrace { ttPeerAddr, ttTransition } ->
+          case ttTransition of
+            Transition _ Nothing ->
+              case ttPeerAddr `Map.lookup` s of
+                Nothing  -> ( Map.insert ttPeerAddr [ttTransition] s
+                            , Nothing
+                            )
+                Just trs -> ( Map.delete ttPeerAddr s
+                            , Just (reverse $ ttTransition : trs)
+                            )
+            _ ->            ( Map.alter ( \ case
+                                              Nothing -> Just [ttTransition]
+                                              Just as -> Just (ttTransition : as)
+                                        ) ttPeerAddr s
+                            , Nothing
+                            )
+      )
+      Map.empty
+
