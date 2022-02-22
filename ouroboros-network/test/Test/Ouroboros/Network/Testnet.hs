@@ -81,6 +81,8 @@ tests =
                    prop_diffusion_target_active_local_above
     , testProperty "diffusion connection manager valid transitions"
                    prop_diffusion_cm_valid_transitions
+    , testProperty "diffusion connection manager valid transition order"
+                   prop_diffusion_cm_valid_transition_order
     ]
   ]
 
@@ -669,6 +671,59 @@ prop_diffusion_cm_valid_transitions defaultBearerInfo diffScript =
         . splitConns id
         $ abstractTransitionEvents
 
+
+-- | A variant of ouroboros-network-framework
+-- 'Test.Ouroboros.Network.Server2.prop_connection_manager_valid_transition_order'
+-- but for running on Diffusion. This means it has to have in consideration the
+-- the logs for all nodes running will all appear in the trace and the test
+-- property should only be valid while a given node is up and running.
+--
+prop_diffusion_cm_valid_transition_order :: AbsBearerInfo
+                                         -> DiffusionScript
+                                         -> Property
+prop_diffusion_cm_valid_transition_order defaultBearerInfo diffScript =
+    let sim :: forall s . IOSim s Void
+        sim = diffusionSimulation (toBearerInfo defaultBearerInfo)
+                                  diffScript
+                                  tracersExtraWithTimeName
+                                  tracerDiffusionSimWithTimeName
+
+        events :: [Trace () DiffusionTestTrace]
+        events = fmap ( Trace.fromList ()
+                      . fmap (\(WithName _ (WithTime _ b)) -> b))
+               . Trace.toList
+               . splitWithNameTrace
+               . Trace.fromList ()
+               . fmap snd
+               . Signal.eventsToList
+               . Signal.eventsFromListUpToTime (Time (10 * 60 * 60))
+               . Trace.toList
+               . fmap (\(WithTime t (WithName name b))
+                       -> (t, WithName name (WithTime t b)))
+               . withTimeNameTraceEvents
+                  @DiffusionTestTrace
+                  @NtNAddr
+               $ runSimTrace sim
+
+     in counterexample (intercalate "\n" . map show . take 30000 $ traceEvents $ runSimTrace sim)
+      . conjoin
+      $ verify_cm_valid_transition_order
+      <$> events
+
+  where
+    verify_cm_valid_transition_order :: Trace () DiffusionTestTrace -> Property
+    verify_cm_valid_transition_order events =
+      let abstractTransitionEvents :: Trace () (AbstractTransitionTrace NtNAddr)
+          abstractTransitionEvents =
+            selectDiffusionConnectionManagerTransitionEvents events
+
+       in getAllProperty
+         . bifoldMap
+            (const mempty)
+            verifyAbstractTransitionOrder
+         . fmap (map ttTransition)
+         . splitConns id
+         $ abstractTransitionEvents
 
 -- Utils
 --
