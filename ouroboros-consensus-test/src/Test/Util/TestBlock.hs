@@ -13,6 +13,7 @@
 {-# LANGUAGE MultiParamTypeClasses      #-}
 {-# LANGUAGE NamedFieldPuns             #-}
 {-# LANGUAGE PatternSynonyms            #-}
+{-# LANGUAGE QuantifiedConstraints      #-}
 {-# LANGUAGE RecordWildCards            #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
 {-# LANGUAGE StandaloneDeriving         #-}
@@ -321,12 +322,11 @@ class ( Typeable ptype
       , Eq       ptype
       , NoThunks ptype
 
-      , Eq        (PayloadDependentState ptype)
-      , Show      (PayloadDependentState ptype)
-      , Generic   (PayloadDependentState ptype)
-      , ToExpr    (PayloadDependentState ptype)
-      , Serialise (PayloadDependentState ptype)
-      , NoThunks  (PayloadDependentState ptype)
+      , forall mk . Eq        (PayloadDependentState ptype mk)
+      , forall mk . Show      (PayloadDependentState ptype mk)
+      , forall mk . Generic   (PayloadDependentState ptype mk)
+      ,             Serialise (PayloadDependentState ptype EmptyMK)
+      , forall mk . NoThunks  (PayloadDependentState ptype mk)
 
       , TickedTableStuff     (LedgerState (TestBlockWith ptype))
       , StowableLedgerTables (LedgerState (TestBlockWith ptype))
@@ -349,14 +349,14 @@ class ( Typeable ptype
       , NoThunks (StorageConfig (TestBlockWith ptype))
       ) => PayloadSemantics ptype where
 
-  type PayloadDependentState ptype :: Type
+  data PayloadDependentState ptype (mk :: MapKind) :: Type
 
   type PayloadDependentError ptype :: Type
 
   applyPayload ::
-       PayloadDependentState ptype
+       PayloadDependentState ptype ValuesMK
     -> ptype
-    -> Either (PayloadDependentError ptype) (PayloadDependentState ptype)
+    -> Either (PayloadDependentError ptype) (PayloadDependentState ptype TrackingMK)
 
   -- | This function is used to implement the 'getBlockKeySets' function of the
   -- 'ApplyBlock' class. Thus we assume that the payload contains all the
@@ -365,11 +365,13 @@ class ( Typeable ptype
   getPayloadKeySets :: ptype -> TableKeySets (LedgerState (TestBlockWith ptype))
 
 instance PayloadSemantics () where
-  type PayloadDependentState () = ()
+  data PayloadDependentState () mk = EmptyPLDS
+    deriving stock (Eq, Show, Generic)
+    deriving anyclass (Serialise, NoThunks)
 
   type PayloadDependentError () = ()
 
-  applyPayload _ _ = Right ()
+  applyPayload _ _ = Right EmptyPLDS
 
   getPayloadKeySets = const NoTestLedgerTables
 
@@ -473,9 +475,9 @@ instance ShowLedgerState (LedgerTables (LedgerState TestBlock)) where
   showsLedgerState _sing = shows
 
 instance StowableLedgerTables (LedgerState TestBlock) where
-  stowLedgerTables   (TestLedger p ()) = TestLedger p ()
-  unstowLedgerTables (TestLedger p ()) = TestLedger p ()
-  isCandidateForUnstow              = isCandidateForUnstowDefault
+  stowLedgerTables   (TestLedger p EmptyPLDS) = TestLedger p EmptyPLDS
+  unstowLedgerTables (TestLedger p EmptyPLDS) = TestLedger p EmptyPLDS
+  isCandidateForUnstow                        = isCandidateForUnstowDefault
 
 instance PayloadSemantics ptype
          => ApplyBlock (LedgerState (TestBlockWith ptype)) (TestBlockWith ptype) where
@@ -511,33 +513,38 @@ data instance LedgerState (TestBlockWith ptype) mk =
         lastAppliedPoint      :: Point (TestBlockWith ptype)
         -- | State that depends on the application of the block payload to the
         -- state.
-      , payloadDependentState :: PayloadDependentState ptype
+      , payloadDependentState :: PayloadDependentState ptype mk
       }
 
 deriving stock instance PayloadSemantics ptype => Show    (LedgerState (TestBlockWith ptype) mk)
 deriving stock instance PayloadSemantics ptype => Eq      (LedgerState (TestBlockWith ptype) mk)
-deriving stock instance Generic (LedgerState (TestBlockWith ptype) mk)
+deriving stock instance                           Generic (LedgerState (TestBlockWith ptype) mk)
 
-deriving anyclass instance PayloadSemantics ptype => Serialise (LedgerState (TestBlockWith ptype) mk)
-deriving anyclass instance PayloadSemantics ptype => NoThunks  (LedgerState (TestBlockWith ptype) mk)
-deriving anyclass instance PayloadSemantics ptype => ToExpr    (LedgerState (TestBlockWith ptype) mk)
+deriving anyclass instance PayloadSemantics ptype =>
+  Serialise (LedgerState (TestBlockWith ptype) EmptyMK)
+deriving anyclass instance NoThunks (PayloadDependentState ptype mk) =>
+  NoThunks  (LedgerState (TestBlockWith ptype) mk)
+
+-- deriving anyclass instance PayloadSemantics ptype => ToExpr    (LedgerState (TestBlockWith ptype) mk)
 
 instance InMemory (LedgerState (TestBlockWith ())) where
-  convertMapKind TestLedger {..} = TestLedger {..}
+  convertMapKind TestLedger {lastAppliedPoint} = TestLedger lastAppliedPoint EmptyPLDS
 
 instance InMemory (LedgerTables (LedgerState TestBlock)) where
   convertMapKind NoTestLedgerTables = NoTestLedgerTables
 
-testInitLedgerWithState :: PayloadDependentState ptype -> LedgerState (TestBlockWith ptype) mk
+testInitLedgerWithState ::
+  PayloadDependentState ptype mk -> LedgerState (TestBlockWith ptype) mk
 testInitLedgerWithState = TestLedger GenesisPoint
 
 -- Ticking has no effect
 newtype instance Ticked1 (LedgerState (TestBlockWith ptype)) mk = TickedTestLedger {
       getTickedTestLedger :: LedgerState (TestBlockWith ptype) mk
     }
-  deriving stock   (Eq)
+  -- deriving stock   (Eq)
 
-testInitExtLedgerWithState :: PayloadDependentState ptype -> ExtLedgerState (TestBlockWith ptype) mk
+testInitExtLedgerWithState ::
+  PayloadDependentState ptype mk -> ExtLedgerState (TestBlockWith ptype) mk
 testInitExtLedgerWithState st = ExtLedgerState {
       ledgerState = testInitLedgerWithState st
     , headerState = genesisHeaderState ()
@@ -647,10 +654,10 @@ instance ShowQuery (BlockQuery TestBlock) where
 instance IsQuery (BlockQuery TestBlock) where
 
 testInitLedger :: LedgerState TestBlock ValuesMK
-testInitLedger = testInitLedgerWithState ()
+testInitLedger = testInitLedgerWithState EmptyPLDS
 
 testInitExtLedger :: ExtLedgerState TestBlock ValuesMK
-testInitExtLedger = testInitExtLedgerWithState ()
+testInitExtLedger = testInitExtLedgerWithState EmptyPLDS
 
 -- | Trivial test configuration with a single core node
 singleNodeTestConfig :: TopLevelConfig TestBlock
