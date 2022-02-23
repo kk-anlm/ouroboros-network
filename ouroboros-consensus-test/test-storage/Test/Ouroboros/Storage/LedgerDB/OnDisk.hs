@@ -33,6 +33,7 @@ import           Prelude hiding (elem)
 
 import           Codec.Serialise (Serialise)
 import qualified Codec.Serialise as S
+import           Control.Exception.Base (assert)
 import           Control.Monad.Except (Except, runExcept)
 import           Control.Monad.State (StateT (..))
 import qualified Control.Monad.State as State
@@ -53,7 +54,6 @@ import           Data.Typeable (Typeable)
 import           Data.Word
 import           GHC.Generics (Generic)
 import           System.Random (getStdRandom, randomR)
-
 
 import           Cardano.Binary (FromCBOR (..), ToCBOR (..))
 
@@ -89,7 +89,6 @@ import           Test.Util.TestBlock hiding (TestBlock, TestBlockCodecConfig,
                      TestBlockStorageConfig)
 
 -- For the Arbitrary instance of 'MemPolicy'
-import           Control.Exception.Base (assert)
 import           Test.Ouroboros.Storage.LedgerDB.InMemory ()
 import           Test.Ouroboros.Storage.LedgerDB.OrphanArbitrary ()
 
@@ -205,7 +204,9 @@ instance PayloadSemantics Tx where
 
       track :: PayloadDependentState Tx ValuesMK -> PayloadDependentState Tx TrackingMK
       track stAfter =
-          stAfter {utxtoktables = TokenToTValue $ calculateDifference utxtokBefore utxtokAfter}
+          stAfter { utxtoktables =
+                      TokenToTValue $ calculateDifference utxtokBefore utxtokAfter
+                  }
         where
           utxtokBefore = testUtxtokTable $ utxtoktables st
           utxtokAfter  = testUtxtokTable $ utxtoktables stAfter
@@ -218,7 +219,7 @@ onValues ::
      (Map Token TValue -> Map Token TValue)
   -> LedgerTables (LedgerState TestBlock) ValuesMK
   -> LedgerTables (LedgerState TestBlock) ValuesMK
-onValues f TokenToTValue { testUtxtokTable } = TokenToTValue $ updateMap testUtxtokTable
+onValues f TokenToTValue {testUtxtokTable} = TokenToTValue $ updateMap testUtxtokTable
   where
     updateMap :: ApplyMapKind ValuesMK Token TValue -> ApplyMapKind ValuesMK Token TValue
     updateMap (ApplyValuesMK (HD.UtxoValues utxovals)) =
