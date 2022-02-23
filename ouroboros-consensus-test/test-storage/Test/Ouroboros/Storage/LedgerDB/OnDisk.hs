@@ -89,6 +89,7 @@ import           Test.Util.TestBlock hiding (TestBlock, TestBlockCodecConfig,
                      TestBlockStorageConfig)
 
 -- For the Arbitrary instance of 'MemPolicy'
+import           Control.Exception.Base (assert)
 import           Test.Ouroboros.Storage.LedgerDB.InMemory ()
 import           Test.Ouroboros.Storage.LedgerDB.OrphanArbitrary ()
 
@@ -163,6 +164,9 @@ instance PayloadSemantics Tx where
            -- on-disk tables. As soon as we remove the legacy ledger we should
            -- remove this field.
            , utxtoktablesInMem :: LedgerTables (LedgerState TestBlock) ValuesMK
+           -- | We use this to assert that we do not stow already stowed tables,
+           -- and that we don't try to unstow already unstowed tables.
+           , stowed            :: Bool
            }
     deriving stock    (Generic, Eq, Show)
     deriving anyclass (NoThunks, Serialise, ToExpr)
@@ -283,17 +287,20 @@ instance ShowLedgerState (LedgerTables (LedgerState TestBlock)) where
   showsLedgerState _sing = shows
 
 instance StowableLedgerTables (LedgerState TestBlock) where
-  stowLedgerTables    (TestLedger p utxtok) =
-    TestLedger p utxtok { utxtoktables      = error "Attempt to use stowed tables"
-                        , utxtoktablesInMem = utxtoktables utxtok
+  stowLedgerTables    (TestLedger p utxtok)  =
+    assert (not (stowed utxtok)) $
+    forgetLedgerStateTables  $
+    TestLedger p utxtok { utxtoktablesInMem  = utxtoktables utxtok
+                        , stowed             = True
                         }
 
-  unstowLedgerTables  (TestLedger p utxtok) =
-    TestLedger p utxtok { utxtoktables      = utxtoktablesInMem utxtok
-                        , utxtoktablesInMem = error "Attemp to use unstowed tables"
+  unstowLedgerTables  (TestLedger p utxtok)  =
+    assert (stowed utxtok) $
+    TestLedger p utxtok { utxtoktables       = utxtoktablesInMem utxtok
+                        , stowed             = False
                         }
 
-  isCandidateForUnstow                      = isCandidateForUnstowDefault
+  isCandidateForUnstow (TestLedger _ utxtok) = stowed utxtok
 
 instance Show (ApplyMapKind mk Token TValue) where
   show ap = showsApplyMapKind ap ""
@@ -392,7 +399,11 @@ initialTestLedgerState = UTxTok {
                    $ Map.singleton initialToken (pointTValue initialToken)
   , utxhist      = Set.singleton initialToken
 
-  , utxtoktablesInMem = error "Attempt to use (initially undefined) stowed tables"
+  , utxtoktablesInMem = TokenToTValue
+                      $ ApplyValuesMK
+                      $ HD.UtxoValues
+                      $ mempty
+  , stowed            = False
   }
   where
     initialToken = Token GenesisPoint
@@ -417,7 +428,7 @@ genBlock pt =
                     , produced = ( Token pt', TValue (pointSlot pt'))
                     }
   where
-    mkBlockFrom :: Point (TestBlockWith ptype) -> ptype -> (TestBlockWith ptype)
+    mkBlockFrom :: Point (TestBlockWith ptype) -> ptype -> TestBlockWith ptype
     mkBlockFrom GenesisPoint           = firstBlockWithPayload 0
     mkBlockFrom (BlockPoint slot hash) = successorBlockWithPayload hash slot
 
@@ -673,10 +684,10 @@ runMock cmd initMock =
     cfg = extLedgerDbConfig (mockSecParam initMock)
 
     go :: Cmd MockSnap -> Mock -> (Success MockSnap, Mock)
-    go Current       mock = (Ledger (forgetLedgerStateTables $ cur (mockLedger mock)), mock)
+    go Current       mock = (Ledger (stowLedgerTables $ cur (mockLedger mock)), mock)
     go (Push b)      mock = first MaybeErr $ mockUpdateLedger (push b)      mock
     go (Switch n bs) mock = first MaybeErr $ mockUpdateLedger (switch n bs) mock
-    go Restore       mock = (Restored (initLog, forgetLedgerStateTables $ cur (mockLedger mock')), mock')
+    go Restore       mock = (Restored (initLog, stowLedgerTables $ cur (mockLedger mock')), mock')
       where
         initLog = mockInitLog mock
         mock'   = applyMockLog initLog mock
