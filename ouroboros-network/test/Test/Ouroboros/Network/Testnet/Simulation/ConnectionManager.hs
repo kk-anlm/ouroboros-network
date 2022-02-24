@@ -70,7 +70,7 @@ splitConns getTransition =
 groupConns :: Ord addr
            => (a -> AbstractTransitionTrace addr)
            -> Trace r a
-           -> Trace r [AbstractTransitionTrace addr]
+           -> Trace r [a]
 groupConns getTransition =
     fmap fromJust
   . Trace.filter isJust
@@ -79,13 +79,13 @@ groupConns getTransition =
   . bimapAccumL
       ( \ s a -> (s, a))
       ( \ s a ->
-          let ta@TransitionTrace { ttPeerAddr } = getTransition a
+          let TransitionTrace { ttPeerAddr } = getTransition a
            in case ttPeerAddr `Map.lookup` s of
-                Nothing  -> ( Map.insert ttPeerAddr [ta] s
+                Nothing  -> ( Map.insert ttPeerAddr [a] s
                             , Nothing
                             )
                 Just trs -> ( Map.delete ttPeerAddr s
-                            , Just (reverse $ ta : trs)
+                            , Just (reverse $ a : trs)
                             )
       )
       Map.empty

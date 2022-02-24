@@ -2577,14 +2577,11 @@ prop_timeouts_enforced serverAcc (ArbDataFlow dataFlow)
     verifyTimeouts st@(Just (state, t')) ((t, TransitionTrace _ tt@(Transition _ to)):xs) =
         let newState  = Just (to, t)
             idleTimeout  =
-                tProtocolIdleTimeout simTimeouts
-              + (0.1 * tProtocolIdleTimeout simTimeouts)
+                1.1 * tProtocolIdleTimeout simTimeouts
             outboundTimeout =
-                tOutboundIdleTimeout simTimeouts
-              + (0.1 * tOutboundIdleTimeout simTimeouts)
+                1.1 * tOutboundIdleTimeout simTimeouts
             timeWaitTimeout =
-                tTimeWaitTimeout simTimeouts
-              + (0.1 * tTimeWaitTimeout simTimeouts)
+                1.1 * tTimeWaitTimeout simTimeouts
             handshakeTimeout = case timeLimitsHandshake of
               (ProtocolTimeLimits stLimit) ->
                 -- Should be the same but we bias to the shorter one
