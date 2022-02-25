@@ -59,7 +59,8 @@ import           Test.Ouroboros.Network.Testnet.Simulation.ConnectionManager
                      AllProperty (..), classifyPrunings,
                      classifyNegotiatedDataFlow, classifyEffectiveDataFlow,
                      verifyAbstractTransition, classifyActivityType,
-                     classifyTermination, splitConns)
+                     classifyTermination, groupConns,
+                     verifyAbstractTransitionOrder)
 import           Test.Ouroboros.Network.Diffusion.Node.NodeKernel
 import           Test.QuickCheck (Property, counterexample, conjoin)
 import           Test.Tasty
@@ -668,7 +669,7 @@ prop_diffusion_cm_valid_transitions defaultBearerInfo diffScript =
               }
            )
         . fmap (map ttTransition)
-        . splitConns id
+        . groupConns id
         $ abstractTransitionEvents
 
 
@@ -722,7 +723,7 @@ prop_diffusion_cm_valid_transition_order defaultBearerInfo diffScript =
             (const mempty)
             verifyAbstractTransitionOrder
          . fmap (map ttTransition)
-         . splitConns id
+         . groupConns id
          $ abstractTransitionEvents
 
 -- Utils

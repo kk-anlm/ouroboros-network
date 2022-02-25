@@ -60,6 +60,33 @@ splitConns getTransition =
       )
       Map.empty
 
+-- | Groups 'AbstractTransitionTrace' to the same peerAddr. Since in Diffusion tests
+-- we truncate the trace we can no longer use splitConns under the assumption that all
+-- connections should end in 'UnknownConnectionSt'. Thus 'groupConns' groups all
+-- transitions to a given peer.
+groupConns :: Ord addr
+           => (a -> AbstractTransitionTrace addr)
+           -> Trace r a
+           -> Trace r [AbstractTransitionTrace addr]
+groupConns getTransition =
+    fmap fromJust
+  . Trace.filter isJust
+  -- there might be some connections in the state, push them onto the 'Trace'
+  . (\(s, o) -> foldr (\a as -> Trace.Cons (Just a) as) o (Map.elems s))
+  . bimapAccumL
+      ( \ s a -> (s, a))
+      ( \ s a ->
+          let ta@TransitionTrace { ttPeerAddr } = getTransition a
+           in case ttPeerAddr `Map.lookup` s of
+                Nothing  -> ( Map.insert ttPeerAddr [ta] s
+                            , Nothing
+                            )
+                Just trs -> ( Map.delete ttPeerAddr s
+                            , Just (reverse $ ta : trs)
+                            )
+      )
+      Map.empty
+
 verifyAbstractTransition :: AbstractTransition
                          -> Bool
 verifyAbstractTransition Transition { fromState, toState } =
