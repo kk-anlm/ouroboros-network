@@ -237,14 +237,12 @@ prop_diffusion_target_established_local defaultBearerInfo diffScript =
             . selectDiffusionPeerSelectionEvents
             $ events
 
-          -- Left () is a TrJoiningNetwork event
-          -- Right () is a TrKillingNode event
-          trJoinKillSig :: Signal (Either () ())
+          trJoinKillSig :: Signal JoinedOrKilled
           trJoinKillSig =
-              Signal.fromChangeEvents (Right ()) -- Default to TrKillingNode
+              Signal.fromChangeEvents Killed -- Default to TrKillingNode
             . Signal.selectEvents
-                (\case TrJoiningNetwork -> Just (Left ())
-                       TrKillingNode    -> Just (Right ())
+                (\case TrJoiningNetwork -> Just Joined
+                       TrKillingNode    -> Just Killed
                        _                -> Nothing
                 )
             . selectDiffusionSimulationTrace
@@ -259,8 +257,10 @@ prop_diffusion_target_established_local defaultBearerInfo diffScript =
           trIsNodeAlive :: Signal Bool
           trIsNodeAlive =
                 not . Set.null
-            <$> Signal.keyedUntil (either Set.singleton (const Set.empty))
-                                  (either (const Set.empty) Set.singleton)
+            <$> Signal.keyedUntil (fromJoineddOrKilled (Set.singleton ())
+                                                       Set.empty)
+                                  (fromJoineddOrKilled Set.empty
+                                                       (Set.singleton ()))
                                   (const False)
                                   trJoinKillSig
 
@@ -303,6 +303,14 @@ prop_diffusion_target_established_local defaultBearerInfo diffScript =
 
 -- Utils
 --
+
+data JoinedOrKilled = Joined | Killed
+  deriving (Eq, Show)
+
+-- Similar to 'either' but for 'JoinedOrKilled'
+fromJoineddOrKilled :: c -> c -> JoinedOrKilled -> c
+fromJoineddOrKilled j _ Joined = j
+fromJoineddOrKilled _ k Killed = k
 
 dynamicTracer :: (Typeable a, Show a) => Tracer (IOSim s) a
 dynamicTracer = Tracer traceM <> sayTracer
