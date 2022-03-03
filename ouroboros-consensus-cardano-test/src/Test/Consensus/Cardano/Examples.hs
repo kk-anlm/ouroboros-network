@@ -31,7 +31,7 @@ import           Ouroboros.Network.Block (Serialised (..))
 import           Ouroboros.Consensus.Block
 import qualified Ouroboros.Consensus.HardFork.History as History
 import           Ouroboros.Consensus.HeaderValidation (AnnTip)
-import           Ouroboros.Consensus.Ledger.Basics (EmptyMK)
+import           Ouroboros.Consensus.Ledger.Basics (EmptyMK, ValuesMK)
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.Query (SomeQuery (..))
 import           Ouroboros.Consensus.Ledger.SupportsMempool (ApplyTxErr)
@@ -132,6 +132,7 @@ instance Inject Examples where
       , exampleChainDepState    = inj (Proxy @WrapChainDepState)             exampleChainDepState
       , exampleExtLedgerState   = inj (Proxy @(Flip ExtLedgerState EmptyMK)) exampleExtLedgerState
       , exampleSlotNo           =                                            exampleSlotNo
+      , examplesLedgerTables    = inj (Proxy @WrapLedgerTables)              examplesLedgerTables
       }
     where
       inj ::
@@ -142,6 +143,11 @@ instance Inject Examples where
            )
         => Proxy f -> Labelled a -> Labelled b
       inj p = fmap (fmap (inject' p startBounds idx))
+
+newtype WrapLedgerTables blk = WrapLedgerTables { unwrapLedgerTables :: LedgerTables (ExtLedgerState blk) ValuesMK }
+
+instance Inject WrapLedgerTables where
+  -- TODO: define this.
 
 {-------------------------------------------------------------------------------
   Setup
