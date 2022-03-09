@@ -33,7 +33,6 @@ import           Prelude hiding (elem)
 
 import           Codec.Serialise (Serialise)
 import qualified Codec.Serialise as S
-import           Control.Exception.Base (assert)
 import           Control.Monad.Except (Except, runExcept)
 import           Control.Monad.State (StateT (..))
 import qualified Control.Monad.State as State
@@ -153,19 +152,6 @@ instance PayloadSemantics Tx where
              -- the definition of 'applyPayload' in the
              -- 'PayloadSemantics' of 'Tx'.
            , utxhist      :: Set Token
-
-           -- | This field is required only to support the 'stowLedgerTables'
-           -- and 'unstowLedgerTables' functions.
-           --
-           -- In the HD design we currently assume that we can store the ledger
-           -- tables in some part of the in-memory state. This is because the
-           -- shelley ledger state contains a UTxO map that correspond to the
-           -- on-disk tables. As soon as we remove the legacy ledger we should
-           -- remove this field.
-           , utxtoktablesInMem :: LedgerTables (LedgerState TestBlock) ValuesMK
-           -- | We use this to assert that we do not stow already stowed tables,
-           -- and that we don't try to unstow already unstowed tables.
-           , stowed            :: Bool
            }
     deriving stock    (Generic, Eq, Show)
     deriving anyclass (NoThunks, Serialise, ToExpr)
@@ -288,20 +274,13 @@ instance ShowLedgerState (LedgerTables (LedgerState TestBlock)) where
   showsLedgerState _sing = shows
 
 instance StowableLedgerTables (LedgerState TestBlock) where
-  stowLedgerTables    (TestLedger p utxtok)  =
-    assert (not (stowed utxtok)) $
-    forgetLedgerStateTables  $
-    TestLedger p utxtok { utxtoktablesInMem  = utxtoktables utxtok
-                        , stowed             = True
-                        }
+  stowLedgerTables     = stowErr "stowLedgerTables"
+  unstowLedgerTables   = stowErr "unstowLedgerTables"
+  isCandidateForUnstow = stowErr "isCandidateForUnstow"
 
-  unstowLedgerTables  (TestLedger p utxtok)  =
-    assert (stowed utxtok) $
-    TestLedger p utxtok { utxtoktables       = utxtoktablesInMem utxtok
-                        , stowed             = False
-                        }
-
-  isCandidateForUnstow (TestLedger _ utxtok) = stowed utxtok
+stowErr :: String -> a
+stowErr fname = error $ "Function " <> fname <> " should not be used in these tests."
+                      <> " The dual ledger should never be used."
 
 instance Show (ApplyMapKind mk Token TValue) where
   show ap = showsApplyMapKind ap ""
@@ -400,11 +379,6 @@ initialTestLedgerState = UTxTok {
                    $ Map.singleton initialToken (pointTValue initialToken)
   , utxhist      = Set.singleton initialToken
 
-  , utxtoktablesInMem = TokenToTValue
-                      $ ApplyValuesMK
-                      $ HD.UtxoValues
-                      $ mempty
-  , stowed            = False
   }
   where
     initialToken = Token GenesisPoint
@@ -685,10 +659,10 @@ runMock cmd initMock =
     cfg = extLedgerDbConfig (mockSecParam initMock)
 
     go :: Cmd MockSnap -> Mock -> (Success MockSnap, Mock)
-    go Current       mock = (Ledger (stowLedgerTables $ cur (mockLedger mock)), mock)
+    go Current       mock = (Ledger (forgetLedgerStateTables $ cur (mockLedger mock)), mock)
     go (Push b)      mock = first MaybeErr $ mockUpdateLedger (push b)      mock
     go (Switch n bs) mock = first MaybeErr $ mockUpdateLedger (switch n bs) mock
-    go Restore       mock = (Restored (initLog, stowLedgerTables $ cur (mockLedger mock')), mock')
+    go Restore       mock = (Restored (initLog, forgetLedgerStateTables $ cur (mockLedger mock')), mock')
       where
         initLog = mockInitLog mock
         mock'   = applyMockLog initLog mock
@@ -847,11 +821,8 @@ initStandaloneDB dbEnv@DbEnv{..} = do
 
     initDB :: LedgerDB' TestBlock
     initDB = ledgerDbWithAnchor
-               RunBoth
-               -- Here we need to take the key-value map that is in the initial
-               -- ledger state and stow the tables so that they can be unstowed
-               -- in the 'ledgerDbWithAnchor' function.
-               (stowLedgerTables $ testInitExtLedgerWithState initialTestLedgerState)
+               RunOnlyNew
+               (forgetLedgerStateTables $ testInitExtLedgerWithState initialTestLedgerState)
 
     getBlock ::
          RealPoint TestBlock
@@ -996,7 +967,7 @@ runDB standalone@DB{..} cmd =
             dbLedgerDbCfg
             (return (testInitExtLedgerWithState initialTestLedgerState))
             streamAPI
-            RunBoth
+            RunOnlyNew
         atomically $ do
           modifyTVar dbState (\(rs, _) -> (rs, db))
           writeTVar dbBackingStore backingStore
