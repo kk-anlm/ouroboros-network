@@ -206,6 +206,21 @@ onValues ::
   -> LedgerTables (LedgerState TestBlock) ValuesMK
   -> LedgerTables (LedgerState TestBlock) ValuesMK
 onValues f TokenToTValue {testUtxtokTable} = TokenToTValue $ updateMap testUtxtokTable
+-- onValues f TokenToTValue {testUtxtokTable} = mapLedgerTables updateMap testUtxtokTable
+--
+-- Won't work:
+    -- • Couldn't match type ‘v’ with ‘TValue’
+    --   ‘v’ is a rigid type variable bound by
+    --     a type expected by the context:
+    --       forall k v.
+    --       Ord k =>
+    --       ApplyMapKind 'ValuesMK k v -> ApplyMapKind 'ValuesMK k v
+    --     at test-storage/Test/Ouroboros/Storage/LedgerDB/OnDisk.hs:208:62-70
+    --   Expected type: ApplyMapKind 'ValuesMK k v
+    --                  -> ApplyMapKind 'ValuesMK k v
+    --     Actual type: ApplyMapKind 'ValuesMK Token TValue
+    --                  -> ApplyMapKind 'ValuesMK Token TValue
+
   where
     updateMap :: ApplyMapKind ValuesMK Token TValue -> ApplyMapKind ValuesMK Token TValue
     updateMap (ApplyValuesMK (HD.UtxoValues utxovals)) =
@@ -323,24 +338,29 @@ instance ToExpr (HD.UtxoEntryDiff TValue) where
   toExpr = genericToExpr
 
 instance ToExpr (ExtLedgerState TestBlock ValuesMK) where
-  toExpr ExtLedgerState {headerState, ledgerState} = App "ExtLedgerState" [ genericToExpr headerState
-                                                                          , genericToExpr ledgerState
-                                                                          ]
+  toExpr = genericToExpr
+
+instance ToExpr (LedgerState (TestBlockWith Tx) 'ValuesMK) where
+  toExpr = genericToExpr
 
 -- Required by the ToExpr (SeqUtxoDiff k v) instance
 instance ToExpr (HD.SudElement Token TValue) where
-  toExpr (HD.SudElement slot diff) = App "SudElement" [toExpr slot, genericToExpr diff]
+  toExpr = genericToExpr
+
+-- Required by the ToExpr (HD.SudElement Token TValue) instance
+instance ToExpr (HD.UtxoDiff Token TValue) where
+  toExpr = genericToExpr
 
 instance ToExpr (LedgerTables (LedgerState TestBlock) mk) where
-  toExpr (TokenToTValue utxtok) = App "TokenToTValue" [toExpr utxtok]
+  toExpr = genericToExpr
 
 -- Required by the genericToExpr application on RewoundKeys
 instance ToExpr (HD.UtxoKeys Token TValue) where
-  toExpr (HD.UtxoKeys keyset) = App "UtxoKeys" [toExpr keyset]
+  toExpr = genericToExpr
 
 -- Required by the genericToExpr application on RewoundKeys
 instance ToExpr (HD.UtxoValues Token TValue) where
-  toExpr (HD.UtxoValues values) = App "UtxoValues" [toExpr values]
+  toExpr = genericToExpr
 
 {-------------------------------------------------------------------------------
   TestBlock generation
@@ -803,10 +823,7 @@ initStandaloneDB dbEnv@DbEnv{..} = do
                             (error "New backing store doesn't use HasFS for now")
                             (ExtLedgerStateTables
                                 TokenToTValue {
-                                -- TODO we need to check if passing an empty
-                                -- ledger state is the right thing to do.
-                                --
-                                -- I don't see other alternatives.
+                                -- TODO we could consider adapting the test generator to generate an initial ledger with non-empty tables.
                                   testUtxtokTable = ApplyValuesMK (HD.UtxoValues mempty )})
     let dbResolve :: ResolveBlock m TestBlock
         dbResolve r = atomically $ getBlock r <$> readTVar dbBlocks
