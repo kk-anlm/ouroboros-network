@@ -136,7 +136,7 @@ data Model blk = Model {
     , currentLedger    :: ExtLedgerState blk EmptyMK
     , initLedger       :: ExtLedgerState blk EmptyMK
     , iterators        :: Map IteratorId [blk]
-    , valid            :: ValidBlocks blk
+    , valid            :: Set (HeaderHash blk)
     , invalid          :: InvalidBlocks blk
     , currentSlot      :: SlotNo
     , maxClockSkew     :: Word64
@@ -454,21 +454,108 @@ addBlock cfg blk m = Model {
           (currentChain m)
       $ consideredCandidates
 
-    -- Sometimes blocks are added not in order and therefore we cannot just look
-    -- at the last added block and push it to the set of known valid blocks. The
-    -- easiest (and considering the lengths of the generated chains) way is to
-    -- just push all the valid blocks in the chain into the set.
-    --
-    -- Also, the chain selection algorithm in the SUT will test chains one by
-    -- one until it finds the one that should be selected, so prefixes of chains
-    -- will be tested for validity and blocks in those prefixes might be
-    -- included in the set of known valid blocks. Therefore, as we know which
-    -- chain was selected, and on every chain we know the valid blocks, we will
-    -- fold over the candidates up to (and including) the selected one.
+    -- See note [Getting the valid blocks] just below
     valid' = foldl
                (Chain.foldChain (\s b -> Set.insert (blockHash b) s))
                (valid m)
                (takeWhile (not . Chain.isPrefixOf newChain) (map fst consideredCandidates) ++ [newChain])
+
+-- = Getting the valid blocks
+--
+-- The model and the real algorithms differ in the process but not really differ
+-- in the outcome. To show this, we will use a running example. Imagine having
+-- the following candidates:
+--
+-- > C0: vvvvvxxxxx
+-- > C1: vvvvvvvx
+-- > C2: vvv
+--
+-- For candidate Cx, we will call CxV the valid prefix and CxI the invalid suffix.
+--
+-- The chain selection algorithm will run whenever we add a block, although it will
+-- only do a meaningful run when adding a block results in a chain that is longer
+-- than the currently selected chain. Note that the chain selection algorithm
+-- doesn't know beforehand the validity of the blocks in the candidates. The
+-- process if follows will be:
+--
+-- 1. Sort the chains by 'SelectView'.
+--
+--    > sortedCandidates == [C0, C1, C2]
+--
+-- 2. Until a candidate is found to be valid and longer than the currently selected
+--    chain, take the head of the (sorted) list of candidates and validate the
+--    blocks in it one by one.
+--
+--    If a block in the candidate is found to be invalid, the candidate is
+--    truncated, added back to the list, and the algorithm starts again at step 1.
+--    The valid blocks in the candidate are recorded in the set of known-valid
+--    blocks, so that the next time they are applied, it is known that applying
+--    said block can't fail and therefore some checks can be skipped. The invalid
+--    blocks in the candidate are recorded in the set of known-invalid blocks so
+--    that they are not applied again.
+--
+--    > [C0, C1, C2]
+--    >
+--    >          validate C0 -> C0V & C0I
+--    >
+--    > [C1, C2] ++ [C0V]
+--    > knownValid   = append C0V knownValid
+--    > knownInvalid = append C0I knownInvalid
+--    >
+--    >          re-sort list
+--    >
+--    > sortBy `selectView` [C1, C2, C0V] == [C1, C0V, C2]
+--    >
+--    >          validate C1 -> C1V & C1I
+--    >
+--    > [C0V, C2] ++ [C1V]
+--    > knownValid   = append C1V knownValid
+--    > knownInvalid = append C1I knownInvalid
+--    >
+--    >          re-sort list
+--    >
+--    > sortBy `selectView` [C0V, C2, C1V] == [C1V, C0V, C2]
+--    >
+--    >          validate C1V -> OK
+--
+-- 3. If such a candidate is found, the algorithm will return it as a result.
+--    Otherwise, the algorithm will return a 'Nothing'.
+--
+--    > chainSelection [C0, C1, C2] = Just C1V
+--
+-- On the other hand, the chain selection on the model makes some shortcuts to
+-- achieve the same result:
+--
+-- 1. 'validChains' will return the list of candidates sorted by 'SelectView' and
+--    each candidate is truncated to its valid prefix.
+--
+--    > validChains [C0, C1, C2] = (invalid == C0I + C1I, candidates == [C0V, C1V, C2])
+--
+-- 2. 'selectChain' will sort the chains by 'SelectView' but note that now it will
+--    use the 'SelectView' of the already truncated candidate.
+--
+--    > selectChain [C0V, C1V, C2] = listToMaybe (sortBy `selectView` [C0V, C1V, C2])
+--    >                            = listToMaybe ([C1V, C0V, C2])
+--    >                            = Just C1V
+--
+--    The selected candidate will be the same one that the chain selection
+--    algorithm would choose. However, as the chain selection algorithm will
+--    consider the candidates as they were sorted by 'SelectView' on the
+--    non-truncated candidates, blcoks in 'C0v' are also known to be valid by
+--    the real algorithm.
+--
+--    To achieve this, we can process the list of candidates returned by
+--    'validChains' until we find the one 'selectChain' selected as these will be
+--    the ones that the real algorithm would test and re-add to the list once
+--    truncated.
+--
+--    > knownInvalid = append (C0I + C1I) knownInvalid
+--    > knownValid   = foldl append knownValid (takeWhile (/= C1V) candidates ++ [C1V])
+--
+--    Note that the set of known valid blocks is equivalent to the set on the
+--    real algorithm, but the set of known invalid blocks is a superset of the
+--    ones known by the real algorithm. See the note
+--    Ouroboros.Storage.ChainDB.StateMachine.[Invalid blocks].
 
 addBlocks :: (Eq blk, LedgerSupportsProtocol blk, InMemory (ExtLedgerState blk))
           => TopLevelConfig blk
@@ -642,7 +729,6 @@ class ( HasHeader blk
 -------------------------------------------------------------------------------}
 
 type InvalidBlocks blk = Map (HeaderHash blk) (InvalidBlockReason blk, SlotNo)
-type ValidBlocks blk = Set (HeaderHash blk)
 
 -- | Result of 'validate', also used internally.
 data ValidatedChain blk =
